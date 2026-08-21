@@ -1,21 +1,50 @@
+use raylib::prelude::*;
+use std::env;
 use std::fs::File;
-use std::io::{BufWriter, Write, stderr};
+use std::io::{self, BufRead, BufReader, BufWriter, Write, stderr};
+use std::process;
 
 mod vec3;
-use vec3::{Vec3,Color,Point3};
+use vec3::{Vec3,Colour,Point3,dot};
 mod ray;
 use ray::{Ray};
 
+fn hit_sphere(center : Point3, radius: f64, r: &Ray) -> Option<f64>{
+    let oc = center - *r.origin();
+    let a = dot(*r.direction(), *r.direction());
+    let b = -2.0 * dot(*r.direction(), oc);
+    let c = dot(oc, oc) - radius * radius;
+
+    let D = b * b - 4.0 * a * c;
+    if D < 0.0 {
+        None 
+    }
+    else{
+        Some((-b-D.sqrt()) / (2.0 * a))
+    }
+}
 // take a ray as input -> calculate its colour -> return black 
-fn ray_color(r: &Ray) -> Color{
+fn ray_color(r: &Ray) -> Colour{
     //Color::new(0.0,0.0,0.0)
+    let sph = hit_sphere(Point3::new(0.0,0.0,-1.0), 0.5, r);
+    if let Some(t) = sph {
+        let N = Vec3::unit(&(r.at(t) - Vec3::new(0.0,0.0,-1.0))) * 1.0;
+        Colour::new(N.x()+1.0, N.y()+1.0, N.z()+1.0) * 0.5
+        
+    }
+    else {
+        let unit_dir = Vec3::unit(r.direction());
+        let a = 0.5*(unit_dir.y() + 1.0);
+        Colour::new(1.0, 1.0, 1.0)*(1.0-a) + Colour::new(0.5, 0.7, 1.0)*a
+
+    }
     //let unit_dir = r.direction().unit();
-    let unit_dir = Vec3::unit(r.direction());
-    let a = 0.5*(unit_dir.y() + 1.0);
-    Color::new(1.0, 1.0, 1.0)*(1.0-a) + Color::new(0.5, 0.7, 1.0)*a
+    // let unit_dir = Vec3::unit(r.direction());
+    // let a = 0.5*(unit_dir.y() + 1.0);
+    // Color::new(1.0, 1.0, 1.0)*(1.0-a) + Color::new(0.5, 0.7, 1.0)*a
 }
 
-fn main() -> std::io::Result<()> {
+fn raytracer() -> std::io::Result<()> {
     let file = File::create("image.ppm")?;
     let mut writer = BufWriter::new(file);
     // new error log buffer class
@@ -75,5 +104,74 @@ fn main() -> std::io::Result<()> {
     writeln!(clog, "Done!!")?;
     clog.flush()?;
     writer.flush()?;
+    Ok(())
+}
+
+fn ppmgenerator() -> std::io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run -- <file_path>");
+        process::exit(1);
+    }
+
+    let file = File::open(&args[1])?;
+    let reader = BufReader::new(file);
+    
+    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
+    let p3 = &lines[0];
+    let mut parts = lines[1].split_whitespace();
+    let width : i32 = parts.next().expect("width not available").parse().expect("some issue with width");
+    let height : i32 = parts.next().expect("height not available").parse().expect("some issue with height");
+    let max_color: f32 = lines[2].trim().parse().expect("some issue with max color value");
+
+    let rem = lines[3..].join(" ");
+    let mut tokens = rem.split_whitespace();
+    let mut pixels: Vec<Color> = Vec::with_capacity((width * height) as usize);
+
+    while let (Some(r_str), Some(g_str), Some(b_str)) = (tokens.next(), tokens.next(), tokens.next()) {
+        let r_raw: f32 = r_str.parse().unwrap_or(0.0);
+        let g_raw: f32 = g_str.parse().unwrap_or(0.0);
+        let b_raw: f32 = b_str.parse().unwrap_or(0.0);
+
+        // Normalize color values
+        let r = ((r_raw / max_color) * 255.0) as u8;
+        let g = ((g_raw / max_color) * 255.0) as u8;
+        let b = ((b_raw / max_color) * 255.0) as u8;
+
+        pixels.push(Color::new(r, g, b, 255));
+    }
+
+    let (mut rl, thread) = raylib::init().size(width,height).title("ppm viewer").build();
+
+    rl.set_target_fps(60);
+    while !rl.window_should_close(){
+        let mut d = rl.begin_drawing(&thread);
+        d.clear_background(Color::RAYWHITE);
+        let mut y_offset = 20;
+        //for line in &lines {
+
+            //d.draw_text(line, 20, y_offset, 18, Color::LIGHTGRAY);
+            //y_offset+=22;
+            for y in 0..height {
+                for x in 0..width {
+                    let index = (x + y * width) as usize;
+                    if let Some(&color) = pixels.get(index) {
+                        d.draw_pixel(x, y, color);
+                    }
+                }
+            }
+     
+
+    }
+
+    Ok(())
+
+}
+
+fn main() -> std::io::Result<()> {
+    raytracer()?;
+    ppmgenerator()?;
+
     Ok(())
 }
